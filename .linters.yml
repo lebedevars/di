@@ -1,0 +1,161 @@
+run:
+  concurrency: 4
+
+  deadline: 2m
+
+  issues-exit-code: 1
+
+  # include test files or not, default is true
+  tests: true
+
+  build-tags:
+
+  skip-dirs:
+    - deploy
+
+  skip-files:
+
+  #modules-download-mode: readonly|release|vendor
+
+
+# output configuration options
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+
+# all available settings of specific linters
+linters-settings:
+  errcheck:
+    check-type-assertions: false
+    check-blank: false
+    ignore: fmt:.*,io/ioutil:^Read.*
+    exclude:
+
+  funlen:
+    lines: 60
+    statements: 40
+
+  govet:
+    check-shadowing: true
+    settings:
+      printf: # analyzer name, run `go tool vet help` to see all analyzers
+        funcs: # run `go tool vet help printf` to see available settings for `printf` analyzer
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Infof
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Warnf
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Errorf
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Fatalf
+    enable:
+    enable-all: true
+    disable:
+    disable-all: false
+  golint:
+    min-confidence: 0.8
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes:
+  gocyclo:
+    min-complexity: 10
+  gocognit:
+    min-complexity: 15
+  maligned:
+    suggest-new: true
+  dupl:
+    threshold: 200
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  depguard:
+    list-type: blacklist
+    include-go-root: false
+    packages:
+      - github.com/sirupsen/logrus
+    packages-with-error-messages:
+      github.com/sirupsen/logrus: "logging is allowed only by logutils.Log"
+  misspell:
+    locale: US
+    ignore-words:
+  lll:
+    line-length: 250
+    tab-width: 1
+  unused:
+    check-exported: true
+  unparam:
+    check-exported: true
+  nakedret:
+    max-func-lines: 30
+  prealloc:
+    simple: true
+    range-loops: true # Report preallocation suggestions on range loops, true by default
+    for-loops: false # Report preallocation suggestions on for loops, false by default
+  gocritic:
+    enabled-checks:
+    disabled-checks:
+      - regexpMust
+      - unlambda
+    enabled-tags: # diagnostic | style | performance | experimental
+      - performance
+      - diagnostic
+      - style
+    settings: # settings passed to gocritic
+      captLocal: # must be valid enabled check name
+        paramsOnly: true
+      rangeValCopy:
+        sizeThreshold: 32
+        skipTestFuncs: true
+  godox:
+    keywords: # default keywords are TODO, BUG, and FIXME, these can be overwritten by this setting
+  dogsled:
+    max-blank-identifiers: 2
+  whitespace:
+    multi-if: false
+
+linters:
+  enable:
+    # Enabled By Default
+    - govet
+    - staticcheck
+    - errcheck
+    - unused
+    - gosimple
+    - structcheck
+    - varcheck
+    - ineffassign
+    - deadcode
+    - typecheck
+
+    # Disabled By Default
+    - unconvert
+    - dupl
+    - goconst
+    - gocyclo
+    - gocognit
+    - goimports
+    - misspell
+    - lll
+    - unparam
+    - prealloc
+    - gocritic
+  enable-all: false
+  disable:
+  disable-all: false
+  presets:
+  fast: false
+
+
+issues:
+  exclude-rules:
+    # Exclude test functions
+    - path: _test\.go
+      linters:
+        - unused
+
+  exclude-use-default: true
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  new: false
+  new-from-rev:
+  new-from-patch:
