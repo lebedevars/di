@@ -40,6 +40,7 @@ func NewContainer() *container {
 	}
 }
 
+// Register registers the provider's out argument with the provider's parameters as dependencies
 func (c *container) Register(provider interface{}, scope Scope) error {
 	providerType := reflect.TypeOf(provider)
 	if providerType.Kind() != reflect.Func {
@@ -101,6 +102,8 @@ func (c *container) Register(provider interface{}, scope Scope) error {
 	return nil
 }
 
+// Build checks dependency graph for cyclic dependencies, checks if all dependencies
+// were registered and created singletons
 func (c *container) Build() error {
 	err := c.graph.detectCyclicDependencies()
 	if err != nil {
@@ -127,6 +130,7 @@ func (c *container) Build() error {
 	return nil
 }
 
+// Invoke calls invoker with resolved arguments
 func (c *container) Invoke(invoker interface{}) error {
 	invokerType := reflect.TypeOf(invoker)
 	if invokerType.Kind() != reflect.Func {

@@ -17,6 +17,7 @@ func (graph *dependencyGraph) addDependency(from, to reflect.Type) {
 	graph.deps[from] = append(graph.deps[from], to)
 }
 
+// detectCyclicDependencies uses DFS to determine if the dependency graph is cyclic
 func (graph *dependencyGraph) detectCyclicDependencies() error {
 	visited := make(map[reflect.Type]bool)
 	recStack := make(map[reflect.Type]bool)
