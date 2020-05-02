@@ -9,14 +9,14 @@ import (
 )
 
 type (
-	container struct {
+	Container struct {
 		m            sync.RWMutex
 		graph        *dependencyGraph
 		constructors map[reflect.Type]innerConstructor
 		cache        map[reflect.Type]reflect.Value
 	}
 
-	// innerConstructor calls provider with arguments resolved from the container
+	// innerConstructor calls provider with arguments resolved from the Container
 	innerConstructor func() reflect.Value
 
 	Scope int
@@ -31,8 +31,8 @@ var (
 	notAFunctionError = errors.New("argument is not a function")
 )
 
-func NewContainer() *container {
-	return &container{
+func NewContainer() *Container {
+	return &Container{
 		m:            sync.RWMutex{},
 		graph:        newDependencyGraph(),
 		constructors: make(map[reflect.Type]innerConstructor),
@@ -41,7 +41,7 @@ func NewContainer() *container {
 }
 
 // Register registers the provider's out argument with the provider's parameters as dependencies
-func (c *container) Register(provider interface{}, scope Scope) error {
+func (c *Container) Register(provider interface{}, scope Scope) error {
 	providerType := reflect.TypeOf(provider)
 	if providerType.Kind() != reflect.Func {
 		return notAFunctionError
@@ -104,7 +104,7 @@ func (c *container) Register(provider interface{}, scope Scope) error {
 
 // Build checks dependency graph for cyclic dependencies, checks if all dependencies
 // were registered and created singletons
-func (c *container) Build() error {
+func (c *Container) Build() error {
 	err := c.graph.detectCyclicDependencies()
 	if err != nil {
 		return err
@@ -131,7 +131,7 @@ func (c *container) Build() error {
 }
 
 // Invoke calls invoker with resolved arguments
-func (c *container) Invoke(invoker interface{}) error {
+func (c *Container) Invoke(invoker interface{}) error {
 	invokerType := reflect.TypeOf(invoker)
 	if invokerType.Kind() != reflect.Func {
 		return notAFunctionError
