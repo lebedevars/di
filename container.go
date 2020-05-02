@@ -159,3 +159,17 @@ func (c *Container) Invoke(invoker interface{}) error {
 	reflect.ValueOf(invoker).Call(args)
 	return nil
 }
+
+// Get returns dependency of type t
+func (c *Container) Get(t reflect.Type) (interface{}, error) {
+	if cachedValue, ok := c.cache[t]; ok {
+		return cachedValue.Interface(), nil
+	} else {
+		constructor, ok := c.constructors[t]
+		if !ok {
+			return nil, fmt.Errorf("dependency %s was not registered", t)
+		}
+
+		return constructor().Interface(), nil
+	}
+}

@@ -1,6 +1,7 @@
 package di
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -80,6 +81,26 @@ func TestSingleton(t *testing.T) {
 		as.Equal(singleton, ex2.Example)
 	})
 	as.NoError(err)
+}
+
+func TestGet(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	text := "I was resolved"
+	err := c.Register(func() *example {
+		return newExample(text)
+	}, Singleton)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	ex, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.IsType(&example{}, ex)
+	newEx := ex.(*example)
+	as.Equal(text, newEx.text)
 }
 
 func TestDoubleRegister(t *testing.T) {

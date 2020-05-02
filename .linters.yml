@@ -81,7 +81,7 @@ linters-settings:
     line-length: 250
     tab-width: 1
   unused:
-    check-exported: true
+    check-exported: false
   unparam:
     check-exported: true
   nakedret:
