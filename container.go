@@ -66,6 +66,10 @@ func (c *Container) WithContext(key string, value interface{}) *Container {
 	return newContainer
 }
 
+func (c *Container) GetContextValue(key string) interface{} {
+	return c.context[key]
+}
+
 // Register registers the provider's out argument with the provider's parameters as dependencies
 func (c *Container) Register(provider interface{}, scope Scope) error {
 	providerType := reflect.TypeOf(provider)

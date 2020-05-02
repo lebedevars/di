@@ -108,7 +108,7 @@ func TestWithContext(t *testing.T) {
 	c := NewContainer()
 	value := "I was injected from container's context"
 	err := c.Register(func() *example {
-		return newExample(c.context["text"].(string))
+		return newExample(c.GetContextValue("text").(string))
 	}, Request)
 	as.NoError(err)
 
