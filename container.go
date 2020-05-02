@@ -10,25 +10,35 @@ import (
 
 type (
 	Container struct {
-		m             sync.RWMutex
-		graph         *dependencyGraph
-		constructors  map[reflect.Type]innerConstructor
-		cache         map[reflect.Type]reflect.Value
-		contextParams ContextParams
+		m               sync.RWMutex
+		graph           *dependencyGraph
+		constructors    map[reflect.Type]innerConstructor
+		singletonsCache map[reflect.Type]reflect.Value
+		perRequestCache map[reflect.Type]reflect.Value
+		contextParams   ContextParams
+		scope           scope
 	}
+
+	// Lifetime determines if dependency can be retrieved from cache or should be instantiated again
+	Lifetime int
+
+	// ContextParams represents container parameters. When
+	ContextParams map[string]interface{}
 
 	// innerConstructor calls provider with arguments resolved from the Container
 	innerConstructor func(*Container) reflect.Value
 
-	Scope int
-
-	// ContextParams represents container parameters. When
-	ContextParams map[string]interface{}
+	// scope determines how container resolves dependencies:
+	// container of Request scope will cache Transient lifetime dependencies
+	scope int
 )
 
 const (
-	Singleton Scope = 1
-	Request   Scope = 2
+	Singleton Lifetime = 1
+	Transient Lifetime = 2
+
+	main    scope = 1
+	request scope = 2
 )
 
 var (
@@ -39,11 +49,12 @@ var (
 // NewContainer creates a new container
 func NewContainer() *Container {
 	return &Container{
-		m:             sync.RWMutex{},
-		graph:         newDependencyGraph(),
-		constructors:  make(map[reflect.Type]innerConstructor),
-		cache:         make(map[reflect.Type]reflect.Value),
-		contextParams: make(map[string]interface{}),
+		m:               sync.RWMutex{},
+		graph:           newDependencyGraph(),
+		constructors:    make(map[reflect.Type]innerConstructor),
+		singletonsCache: make(map[reflect.Type]reflect.Value),
+		contextParams:   make(map[string]interface{}),
+		scope:           main,
 	}
 }
 
@@ -52,7 +63,7 @@ func NewContainer() *Container {
 // Context values can be retrieved in provider functions:
 //  err := c.Register(func(params di.ContextParams) *example {
 //		return newExample(params.GetValue("key").(string))
-//	}, Request)
+//	}, Transient)
 func (c *Container) WithContext(key string, value interface{}) *Container {
 	newContext := make(map[string]interface{})
 	for k, v := range c.contextParams {
@@ -61,13 +72,27 @@ func (c *Container) WithContext(key string, value interface{}) *Container {
 
 	newContext[key] = value
 	newContainer := &Container{
-		graph:         c.graph,
-		constructors:  c.constructors,
-		cache:         c.cache,
-		contextParams: newContext,
+		m:               sync.RWMutex{},
+		graph:           c.graph,
+		constructors:    c.constructors,
+		singletonsCache: c.singletonsCache,
+		contextParams:   newContext,
 	}
 
 	return newContainer
+}
+
+// RequestScoped returns new container in request scope
+func (c *Container) RequestScoped() *Container {
+	return &Container{
+		m:               sync.RWMutex{},
+		graph:           c.graph,
+		constructors:    c.constructors,
+		singletonsCache: c.singletonsCache,
+		perRequestCache: make(map[reflect.Type]reflect.Value),
+		contextParams:   c.contextParams,
+		scope:           request,
+	}
 }
 
 // GetValues returns values from context params
@@ -79,7 +104,7 @@ func (contextParams ContextParams) GetValue(key string) interface{} {
 // needs all of its inner parameters to be instantiated.
 // If ContextParams type is passed as an argument, it will give access to container's
 // context parameters.
-func (c *Container) Register(provider interface{}, scope Scope) error {
+func (c *Container) Register(provider interface{}, scope Lifetime) error {
 	providerType := reflect.TypeOf(provider)
 	if providerType.Kind() != reflect.Func {
 		return notAFunctionError
@@ -124,9 +149,9 @@ func (c *Container) Register(provider interface{}, scope Scope) error {
 	// resolve each argument and call provider
 	innerConstructor := getConstructor(numIn, argTypes, providerValue)
 
-	// create entries in cache for singletons
+	// create entries in singletonsCache for singletons
 	if scope == Singleton {
-		c.cache[outType] = reflect.Value{}
+		c.singletonsCache[outType] = reflect.Value{}
 	}
 
 	c.constructors[outType] = innerConstructor
@@ -143,10 +168,18 @@ func getConstructor(numIn int, argTypes []reflect.Type, providerValue reflect.Va
 				continue
 			}
 
-			// if arg exists in cache - retrieve it
-			if val, ok := con.cache[argType]; ok {
+			// if arg exists in singletonsCache - retrieve it
+			if val, ok := con.singletonsCache[argType]; ok {
 				args[i] = val
+				continue
 			}
+
+			// if arg exists in perRequestCache - retrieve it
+			if val, ok := con.perRequestCache[argType]; ok {
+				args[i] = val
+				continue
+			}
+
 			// otherwise - call constructor for that type
 			args[i] = con.constructors[argType](con)
 		}
@@ -171,8 +204,8 @@ func (c *Container) Build() error {
 		}
 
 		// if there needs to be a cached value (singleton) - create it
-		if _, ok := c.cache[t]; ok {
-			c.cache[t] = c.constructors[t](c)
+		if _, ok := c.singletonsCache[t]; ok {
+			c.singletonsCache[t] = c.constructors[t](c)
 		}
 	}
 
@@ -190,28 +223,39 @@ func (c *Container) Invoke(invoker interface{}) error {
 		return notAFunctionError
 	}
 
-	// resolve each argument type, if found in cache - return value,
-	// otherwise call innerConstructor for that type
 	numIn := invokerType.NumIn()
 	args := make([]reflect.Value, numIn)
 	for i := 0; i < numIn; i++ {
 		argType := invokerType.In(i)
 
-		// get ContextParams
+		// if ContextParams - get value
 		if argType == contextParamsType {
 			args[i] = reflect.ValueOf(c.contextParams)
 			continue
 		}
 
-		if cachedValue, ok := c.cache[argType]; ok {
+		// if singleton - retrieve value
+		if cachedValue, ok := c.singletonsCache[argType]; ok {
 			args[i] = cachedValue
-		} else {
-			constructor, ok := c.constructors[argType]
-			if !ok {
-				return fmt.Errorf("dependency %s was not registered", argType)
-			}
+			continue
+		}
 
-			args[i] = constructor(c)
+		// if transient and container scope is request - retrieve value
+		if cachedValue, ok := c.perRequestCache[argType]; ok && c.scope == request {
+			args[i] = cachedValue
+			continue
+		}
+
+		// call constructor for type
+		constructor, ok := c.constructors[argType]
+		if !ok {
+			return fmt.Errorf("dependency %s was not registered", argType)
+		}
+
+		args[i] = constructor(c)
+		// if container scope is request - cache value
+		if c.scope == request {
+			c.perRequestCache[argType] = args[i]
 		}
 	}
 
@@ -222,14 +266,19 @@ func (c *Container) Invoke(invoker interface{}) error {
 
 // Get returns dependency of type t
 func (c *Container) Get(t reflect.Type) (interface{}, error) {
-	if cachedValue, ok := c.cache[t]; ok {
+	if cachedValue, ok := c.singletonsCache[t]; ok {
 		return cachedValue.Interface(), nil
-	} else {
-		constructor, ok := c.constructors[t]
-		if !ok {
-			return nil, fmt.Errorf("dependency %s was not registered", t)
-		}
-
-		return constructor(c).Interface(), nil
 	}
+	constructor, ok := c.constructors[t]
+	if !ok {
+		return nil, fmt.Errorf("dependency %s was not registered", t)
+	}
+
+	val := constructor(c)
+	// if container scope is request - cache value
+	if c.scope == request {
+		c.perRequestCache[t] = val
+	}
+
+	return val.Interface(), nil
 }

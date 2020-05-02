@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -40,12 +41,12 @@ func TestSimple(t *testing.T) {
 
 	err := c.Register(func(ex *example) *example2 {
 		return newExample2(ex)
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Register(func() *example {
 		return newExample(wasInjected)
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Build()
@@ -59,7 +60,7 @@ func TestSimple(t *testing.T) {
 }
 
 func TestSingleton(t *testing.T) {
-	singleton := newExample("I was injected")
+	singleton := newExample(time.Now().String())
 	as := assert.New(t)
 	c := NewContainer()
 
@@ -70,7 +71,7 @@ func TestSingleton(t *testing.T) {
 
 	err = c.Register(func(ex *example) *example2 {
 		return newExample2(ex)
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Build()
@@ -81,6 +82,59 @@ func TestSingleton(t *testing.T) {
 		as.Equal(singleton, ex2.Example)
 	})
 	as.NoError(err)
+}
+
+func TestTransientMainScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return &example{text: time.Now().String()}
+	}, Transient)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	var firstRetrieve *example
+	err = c.Invoke(func(ex *example) {
+		firstRetrieve = ex
+	})
+	as.NoError(err)
+
+	var secondRetrieve *example
+	err = c.Invoke(func(ex *example) {
+		secondRetrieve = ex
+	})
+	as.NoError(err)
+	as.NotEqual(firstRetrieve, secondRetrieve)
+}
+
+func TestTransientRequestScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return &example{text: time.Now().String()}
+	}, Transient)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	c = c.RequestScoped()
+	var firstRetrieve *example
+	err = c.Invoke(func(ex *example) {
+		firstRetrieve = ex
+	})
+	as.NoError(err)
+
+	var secondRetrieve *example
+	err = c.Invoke(func(ex *example) {
+		secondRetrieve = ex
+	})
+	as.NoError(err)
+	as.Equal(firstRetrieve, secondRetrieve)
 }
 
 func TestGet(t *testing.T) {
@@ -109,7 +163,7 @@ func TestWithContext(t *testing.T) {
 	value := "I was injected from container's contextParams"
 	err := c.Register(func(params ContextParams) *example {
 		return newExample(params.GetValue("text").(string))
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Build()
@@ -128,12 +182,12 @@ func TestDoubleRegister(t *testing.T) {
 
 	err := c.Register(func() *example {
 		return newExample("")
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Register(func() *example {
 		return newExample("")
-	}, Request)
+	}, Transient)
 	as.NotNil(err)
 	as.True(strings.HasSuffix(err.Error(), "was already registered"))
 }
@@ -144,17 +198,17 @@ func TestCyclicDependency(t *testing.T) {
 
 	err := c.Register(func(ex3 *example3) *example {
 		return newExample("")
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Register(func(ex *example) *example2 {
 		return newExample2(ex)
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Register(func(ex *example2) *example3 {
 		return newExample3()
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Build()
@@ -168,7 +222,7 @@ func TestUnregisteredDependency(t *testing.T) {
 
 	err := c.Register(func(ex *example) *example2 {
 		return newExample2(ex)
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Build()
@@ -182,7 +236,7 @@ func TestInvokeUnregisteredDependency(t *testing.T) {
 
 	err := c.Register(func() *example {
 		return newExample("")
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Build()
@@ -198,7 +252,7 @@ func TestRegisterNotFunc(t *testing.T) {
 	as := assert.New(t)
 	c := NewContainer()
 
-	err := c.Register(struct{}{}, Request)
+	err := c.Register(struct{}{}, Transient)
 	as.Errorf(err, notAFunctionError.Error())
 }
 
@@ -208,7 +262,7 @@ func TestInvokeNotFunc(t *testing.T) {
 
 	err := c.Register(func() *example {
 		return newExample("")
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Build()
@@ -225,12 +279,12 @@ func BenchmarkResolve(b *testing.B) {
 	c := NewContainer()
 	err := c.Register(func() *example {
 		return newExample("I was injected")
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Register(func(ex *example) *example2 {
 		return newExample2(ex)
-	}, Request)
+	}, Transient)
 	as.NoError(err)
 
 	err = c.Build()
