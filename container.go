@@ -21,8 +21,6 @@ type (
 	innerConstructor func() reflect.Value
 
 	Scope int
-
-	ContextKey string
 )
 
 const (
