@@ -106,9 +106,9 @@ func TestGet(t *testing.T) {
 func TestWithContext(t *testing.T) {
 	as := assert.New(t)
 	c := NewContainer()
-	value := "I was injected from container's context"
-	err := c.Register(func() *example {
-		return newExample(c.GetContextValue("text").(string))
+	value := "I was injected from container's contextParams"
+	err := c.Register(func(params ContextParams) *example {
+		return newExample(params.GetValue("text").(string))
 	}, Request)
 	as.NoError(err)
 

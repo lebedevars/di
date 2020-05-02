@@ -10,17 +10,20 @@ import (
 
 type (
 	Container struct {
-		m            sync.RWMutex
-		graph        *dependencyGraph
-		constructors map[reflect.Type]innerConstructor
-		cache        map[reflect.Type]reflect.Value
-		context      map[string]interface{}
+		m             sync.RWMutex
+		graph         *dependencyGraph
+		constructors  map[reflect.Type]innerConstructor
+		cache         map[reflect.Type]reflect.Value
+		contextParams ContextParams
 	}
 
 	// innerConstructor calls provider with arguments resolved from the Container
-	innerConstructor func() reflect.Value
+	innerConstructor func(*Container) reflect.Value
 
 	Scope int
+
+	// ContextParams represents container parameters. When
+	ContextParams map[string]interface{}
 )
 
 const (
@@ -30,47 +33,52 @@ const (
 
 var (
 	notAFunctionError = errors.New("argument is not a function")
+	contextParamsType = reflect.TypeOf(ContextParams{})
 )
 
 // NewContainer creates a new container
 func NewContainer() *Container {
 	return &Container{
-		m:            sync.RWMutex{},
-		graph:        newDependencyGraph(),
-		constructors: make(map[reflect.Type]innerConstructor),
-		cache:        make(map[reflect.Type]reflect.Value),
-		context:      make(map[string]interface{}),
+		m:             sync.RWMutex{},
+		graph:         newDependencyGraph(),
+		constructors:  make(map[reflect.Type]innerConstructor),
+		cache:         make(map[reflect.Type]reflect.Value),
+		contextParams: make(map[string]interface{}),
 	}
 }
 
-// WithContext returns container with added context values without changing the original one.
+// WithContext returns container with added contextParams values without changing the original one.
 // Context allows to change how dependencies are instantiated.
 // Context values can be retrieved in provider functions:
-//  err := c.Register(func() *example {
-//		return newExample(c.context["text"].(string))
+//  err := c.Register(func(params di.ContextParams) *example {
+//		return newExample(params.GetValue("key").(string))
 //	}, Request)
 func (c *Container) WithContext(key string, value interface{}) *Container {
 	newContext := make(map[string]interface{})
-	for k, v := range c.context {
+	for k, v := range c.contextParams {
 		newContext[k] = v
 	}
 
 	newContext[key] = value
 	newContainer := &Container{
-		graph:        c.graph,
-		constructors: c.constructors,
-		cache:        c.cache,
-		context:      newContext,
+		graph:         c.graph,
+		constructors:  c.constructors,
+		cache:         c.cache,
+		contextParams: newContext,
 	}
 
 	return newContainer
 }
 
-func (c *Container) GetContextValue(key string) interface{} {
-	return c.context[key]
+// GetValues returns values from context params
+func (contextParams ContextParams) GetValue(key string) interface{} {
+	return contextParams[key]
 }
 
-// Register registers the provider's out argument with the provider's parameters as dependencies
+// Register teaches the container how to resolve dependencies: provider's out-parameter
+// needs all of its inner parameters to be instantiated.
+// If ContextParams type is passed as an argument, it will give access to container's
+// context parameters.
 func (c *Container) Register(provider interface{}, scope Scope) error {
 	providerType := reflect.TypeOf(provider)
 	if providerType.Kind() != reflect.Func {
@@ -101,6 +109,11 @@ func (c *Container) Register(provider interface{}, scope Scope) error {
 
 	// out-parameter depends on all of the in-parameters
 	for _, argType := range argTypes {
+		// skip ContextParams
+		if argType == contextParamsType {
+			continue
+		}
+
 		c.graph.addDependency(outType, argType)
 		if _, ok := c.constructors[argType]; !ok {
 			c.constructors[argType] = nil
@@ -109,19 +122,7 @@ func (c *Container) Register(provider interface{}, scope Scope) error {
 
 	providerValue := reflect.ValueOf(provider)
 	// resolve each argument and call provider
-	innerConstructor := func() reflect.Value {
-		args := make([]reflect.Value, numIn)
-		for i, argType := range argTypes {
-			// if arg exists in cache - retrieve it
-			if val, ok := c.cache[argType]; ok {
-				args[i] = val
-			}
-			// otherwise - call constructor for that type
-			args[i] = c.constructors[argType]()
-		}
-
-		return providerValue.Call(args)[0]
-	}
+	innerConstructor := getConstructor(numIn, argTypes, providerValue)
 
 	// create entries in cache for singletons
 	if scope == Singleton {
@@ -130,6 +131,28 @@ func (c *Container) Register(provider interface{}, scope Scope) error {
 
 	c.constructors[outType] = innerConstructor
 	return nil
+}
+
+func getConstructor(numIn int, argTypes []reflect.Type, providerValue reflect.Value) func(con *Container) reflect.Value {
+	return func(con *Container) reflect.Value {
+		args := make([]reflect.Value, numIn)
+		for i, argType := range argTypes {
+			// get value of ContextParams
+			if argType == contextParamsType {
+				args[i] = reflect.ValueOf(con.contextParams)
+				continue
+			}
+
+			// if arg exists in cache - retrieve it
+			if val, ok := con.cache[argType]; ok {
+				args[i] = val
+			}
+			// otherwise - call constructor for that type
+			args[i] = con.constructors[argType](con)
+		}
+
+		return providerValue.Call(args)[0]
+	}
 }
 
 // Build checks dependency graph for cyclic dependencies, checks if all dependencies
@@ -149,7 +172,7 @@ func (c *Container) Build() error {
 
 		// if there needs to be a cached value (singleton) - create it
 		if _, ok := c.cache[t]; ok {
-			c.cache[t] = c.constructors[t]()
+			c.cache[t] = c.constructors[t](c)
 		}
 	}
 
@@ -174,6 +197,12 @@ func (c *Container) Invoke(invoker interface{}) error {
 	for i := 0; i < numIn; i++ {
 		argType := invokerType.In(i)
 
+		// get ContextParams
+		if argType == contextParamsType {
+			args[i] = reflect.ValueOf(c.contextParams)
+			continue
+		}
+
 		if cachedValue, ok := c.cache[argType]; ok {
 			args[i] = cachedValue
 		} else {
@@ -182,7 +211,7 @@ func (c *Container) Invoke(invoker interface{}) error {
 				return fmt.Errorf("dependency %s was not registered", argType)
 			}
 
-			args[i] = constructor()
+			args[i] = constructor(c)
 		}
 	}
 
@@ -201,6 +230,6 @@ func (c *Container) Get(t reflect.Type) (interface{}, error) {
 			return nil, fmt.Errorf("dependency %s was not registered", t)
 		}
 
-		return constructor().Interface(), nil
+		return constructor(c).Interface(), nil
 	}
 }
