@@ -14,12 +14,15 @@ type (
 		graph        *dependencyGraph
 		constructors map[reflect.Type]innerConstructor
 		cache        map[reflect.Type]reflect.Value
+		context      map[string]interface{}
 	}
 
 	// innerConstructor calls provider with arguments resolved from the Container
 	innerConstructor func() reflect.Value
 
 	Scope int
+
+	ContextKey string
 )
 
 const (
@@ -31,13 +34,38 @@ var (
 	notAFunctionError = errors.New("argument is not a function")
 )
 
+// NewContainer creates a new container
 func NewContainer() *Container {
 	return &Container{
 		m:            sync.RWMutex{},
 		graph:        newDependencyGraph(),
 		constructors: make(map[reflect.Type]innerConstructor),
 		cache:        make(map[reflect.Type]reflect.Value),
+		context:      make(map[string]interface{}),
 	}
+}
+
+// WithContext returns container with added context values without changing the original one.
+// Context allows to change how dependencies are instantiated.
+// Context values can be retrieved in provider functions:
+//  err := c.Register(func() *example {
+//		return newExample(c.context["text"].(string))
+//	}, Request)
+func (c *Container) WithContext(key string, value interface{}) *Container {
+	newContext := make(map[string]interface{})
+	for k, v := range c.context {
+		newContext[k] = v
+	}
+
+	newContext[key] = value
+	newContainer := &Container{
+		graph:        c.graph,
+		constructors: c.constructors,
+		cache:        c.cache,
+		context:      newContext,
+	}
+
+	return newContainer
 }
 
 // Register registers the provider's out argument with the provider's parameters as dependencies
@@ -143,6 +171,7 @@ func (c *Container) Invoke(invoker interface{}) error {
 	args := make([]reflect.Value, numIn)
 	for i := 0; i < numIn; i++ {
 		argType := invokerType.In(i)
+
 		if cachedValue, ok := c.cache[argType]; ok {
 			args[i] = cachedValue
 		} else {

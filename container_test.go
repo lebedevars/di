@@ -103,6 +103,25 @@ func TestGet(t *testing.T) {
 	as.Equal(text, newEx.text)
 }
 
+func TestWithContext(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+	value := "I was injected from container's context"
+	err := c.Register(func() *example {
+		return newExample(c.context["text"].(string))
+	}, Request)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	c = c.WithContext("text", value)
+	err = c.Invoke(func(ex *example) {
+		as.Equal(value, ex.text)
+	})
+	as.NoError(err)
+}
+
 func TestDoubleRegister(t *testing.T) {
 	as := assert.New(t)
 	c := NewContainer()
