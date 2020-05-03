@@ -14,7 +14,7 @@
 ## Basics
 Pass a provider function and lifetime value to Register to teach the container how to build dependencies.
 Provider function must have 1 out-parameter. All of provider's arguments need to be registered as well.
-```
+```go
 c := di.NewContainer()
 // *SomeDep has no dependencies
 err := c.Register(func() *SomeDep {
@@ -27,11 +27,11 @@ err = c.Register(func(someDep *SomeDep) *SomeOtherDep {
 }, di.Singleton)
 ```
 Build the container after setting it up. Build checks for errors in configuration, such as cyclic or missing dependencies. If everything is correct, it instantiates singletons and the container is ready for use:
-```
+```go
 err = c.Build()
 ```
 Now you can use it to resolve dependencies. Call Invoke to call a function with resolved arguments or call Get to get a dependency instance:
-```
+```go
 err = c.Invoke(func(someDep *SomeDep, someOtherDep *SomeOtherDep) {
   // do stuff
 })
@@ -46,18 +46,18 @@ Container supports the following dependency lifetimes:
 * Transient - instantiated once per Invoke or Get call
 
 To take advantage of Scoped resolution, create a container in request scope:
-```
+```go
 c = c.Scoped()
 ```
 Such a container will cache Scoped dependencies and reuse them on Invoke and Get calls.
 
 ## Container context
 Container allows parameterized instantiation of depencencies. To use container's context, call WithContext:
-```
+```go
 c = c.WithContext("key", value)
 ```
 To retrieve context parameters, pass a special type ContextParams as an argument in provider:
-```
+```go
 err := c.Register(func(params di.ContextParams) *Logger {
 		return logger.With("id", params.GetValue("id"))
 	}, di.Scoped)
