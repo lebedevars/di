@@ -9,6 +9,7 @@ import (
 )
 
 type (
+	// Container is a DI container
 	Container struct {
 		m               sync.RWMutex
 		graph           *dependencyGraph
@@ -36,9 +37,9 @@ type (
 )
 
 const (
-	// Singleton lifetime
+	// Singleton lifetime - instatiated once per main container
 	Singleton Lifetime = 1
-	// Scope lifetime - instantiated once per container in request scope
+	// Scoped lifetime - instantiated once per container in request scope
 	Scoped Lifetime = 2
 	// Transient lifetime - instatiated once per call
 	Transient Lifetime = 3
@@ -105,7 +106,7 @@ func (c *Container) Scoped() *Container {
 	}
 }
 
-// GetValues returns values from context params
+// GetValue returns value from context params
 func (contextParams ContextParams) GetValue(key string) interface{} {
 	return contextParams[key]
 }
@@ -132,9 +133,8 @@ func (c *Container) Register(provider interface{}, lifetime Lifetime) error {
 	_, ok := c.graph.deps[outType]
 	if ok {
 		return fmt.Errorf("dependency %s was already registered", outType)
-	} else {
-		c.graph.addDependency(outType, nil)
 	}
+	c.graph.addDependency(outType, nil)
 
 	numIn := providerType.NumIn()
 	argTypes := make([]reflect.Type, numIn)
