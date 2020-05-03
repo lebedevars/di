@@ -57,9 +57,9 @@ linters-settings:
   goimports:
     local-prefixes:
   gocyclo:
-    min-complexity: 10
-  gocognit:
     min-complexity: 15
+  gocognit:
+    min-complexity: 20
   maligned:
     suggest-new: true
   dupl:

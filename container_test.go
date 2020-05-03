@@ -59,7 +59,7 @@ func TestSimple(t *testing.T) {
 	as.NoError(err)
 }
 
-func TestSingleton(t *testing.T) {
+func TestSingletonMainScope(t *testing.T) {
 	singleton := newExample(time.Now().String())
 	as := assert.New(t)
 	c := NewContainer()
@@ -82,6 +82,85 @@ func TestSingleton(t *testing.T) {
 		as.Equal(singleton, ex2.Example)
 	})
 	as.NoError(err)
+}
+
+func TestSingletonRequestScope(t *testing.T) {
+	singleton := newExample(time.Now().String())
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return singleton
+	}, Singleton)
+	as.NoError(err)
+
+	err = c.Register(func(ex *example) *example2 {
+		return newExample2(ex)
+	}, Transient)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	c = c.Scoped()
+	err = c.Invoke(func(ex *example, ex2 *example2) {
+		as.Equal(singleton, ex)
+		as.Equal(singleton, ex2.Example)
+	})
+	as.NoError(err)
+}
+
+func TestScopedMainScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return &example{text: time.Now().String()}
+	}, Scoped)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	var firstRetrieve *example
+	err = c.Invoke(func(ex *example) {
+		firstRetrieve = ex
+	})
+	as.NoError(err)
+
+	var secondRetrieve *example
+	err = c.Invoke(func(ex *example) {
+		secondRetrieve = ex
+	})
+	as.NoError(err)
+	as.NotEqual(firstRetrieve, secondRetrieve)
+}
+
+func TestScopedRequestScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return &example{text: time.Now().String()}
+	}, Scoped)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	c = c.Scoped()
+	var firstRetrieve *example
+	err = c.Invoke(func(ex *example) {
+		firstRetrieve = ex
+	})
+	as.NoError(err)
+
+	var secondRetrieve *example
+	err = c.Invoke(func(ex *example) {
+		secondRetrieve = ex
+	})
+	as.NoError(err)
+	as.Equal(firstRetrieve, secondRetrieve)
 }
 
 func TestTransientMainScope(t *testing.T) {
@@ -122,7 +201,7 @@ func TestTransientRequestScope(t *testing.T) {
 	err = c.Build()
 	as.NoError(err)
 
-	c = c.RequestScoped()
+	c = c.Scoped()
 	var firstRetrieve *example
 	err = c.Invoke(func(ex *example) {
 		firstRetrieve = ex
@@ -134,27 +213,130 @@ func TestTransientRequestScope(t *testing.T) {
 		secondRetrieve = ex
 	})
 	as.NoError(err)
-	as.Equal(firstRetrieve, secondRetrieve)
+	as.NotEqual(firstRetrieve, secondRetrieve)
 }
 
-func TestGet(t *testing.T) {
+func TestGetSingletonMainScope(t *testing.T) {
 	as := assert.New(t)
 	c := NewContainer()
 
-	text := "I was resolved"
 	err := c.Register(func() *example {
-		return newExample(text)
+		return newExample(time.Now().String())
 	}, Singleton)
 	as.NoError(err)
 
 	err = c.Build()
 	as.NoError(err)
 
-	ex, err := c.Get(reflect.TypeOf(&example{}))
+	firstRetrieve, err := c.Get(reflect.TypeOf(&example{}))
 	as.NoError(err)
-	as.IsType(&example{}, ex)
-	newEx := ex.(*example)
-	as.Equal(text, newEx.text)
+	as.IsType(&example{}, firstRetrieve)
+	secondRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.Equal(firstRetrieve.(*example), secondRetrieve.(*example))
+}
+
+func TestGetSingletonRequestScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return newExample(time.Now().String())
+	}, Singleton)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	c = c.Scoped()
+	firstRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.IsType(&example{}, firstRetrieve)
+	secondRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.Equal(firstRetrieve.(*example), secondRetrieve.(*example))
+}
+
+func TestGetScopedMainScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return newExample(time.Now().String())
+	}, Scoped)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	firstRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.IsType(&example{}, firstRetrieve)
+	secondRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.NotEqual(firstRetrieve.(*example), secondRetrieve.(*example))
+}
+
+func TestGetScopedRequestScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return newExample(time.Now().String())
+	}, Scoped)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	c = c.Scoped()
+	firstRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.IsType(&example{}, firstRetrieve)
+	secondRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.Equal(firstRetrieve.(*example), secondRetrieve.(*example))
+}
+
+func TestGetTransientMainScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return newExample(time.Now().String())
+	}, Transient)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	firstRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.IsType(&example{}, firstRetrieve)
+	secondRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.NotEqual(firstRetrieve.(*example), secondRetrieve.(*example))
+}
+
+func TestGetTransientRequestScope(t *testing.T) {
+	as := assert.New(t)
+	c := NewContainer()
+
+	err := c.Register(func() *example {
+		return newExample(time.Now().String())
+	}, Transient)
+	as.NoError(err)
+
+	err = c.Build()
+	as.NoError(err)
+
+	c = c.Scoped()
+	firstRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.IsType(&example{}, firstRetrieve)
+	secondRetrieve, err := c.Get(reflect.TypeOf(&example{}))
+	as.NoError(err)
+	as.NotEqual(firstRetrieve.(*example), secondRetrieve.(*example))
 }
 
 func TestWithContext(t *testing.T) {
@@ -253,7 +435,7 @@ func TestRegisterNotFunc(t *testing.T) {
 	c := NewContainer()
 
 	err := c.Register(struct{}{}, Transient)
-	as.Errorf(err, notAFunctionError.Error())
+	as.Errorf(err, errNotAFunction.Error())
 }
 
 func TestInvokeNotFunc(t *testing.T) {
@@ -269,7 +451,7 @@ func TestInvokeNotFunc(t *testing.T) {
 	as.NoError(err)
 
 	err = c.Invoke(struct{}{})
-	as.Errorf(err, notAFunctionError.Error())
+	as.Errorf(err, errNotAFunction.Error())
 }
 
 func BenchmarkResolve(b *testing.B) {

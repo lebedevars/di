@@ -14,35 +14,41 @@ type (
 		graph           *dependencyGraph
 		constructors    map[reflect.Type]innerConstructor
 		singletonsCache map[reflect.Type]reflect.Value
-		perRequestCache map[reflect.Type]reflect.Value
+		scopedCache     map[reflect.Type]reflect.Value
+		lifetimes       map[reflect.Type]Lifetime
 		contextParams   ContextParams
 		scope           scope
 	}
 
-	// Lifetime determines if dependency can be retrieved from cache or should be instantiated again
+	// Lifetime determines the lifetime of dependencies and whether it can be retrieved from cache or should be
+	// instantiated again based on container's scope
 	Lifetime int
 
-	// ContextParams represents container parameters. When
+	// ContextParams represents container parameters
 	ContextParams map[string]interface{}
 
 	// innerConstructor calls provider with arguments resolved from the Container
 	innerConstructor func(*Container) reflect.Value
 
 	// scope determines how container resolves dependencies:
-	// container of Request scope will cache Transient lifetime dependencies
+	// container of Request scope will cache Scoped lifetime dependencies
 	scope int
 )
 
 const (
+	// Singleton lifetime
 	Singleton Lifetime = 1
-	Transient Lifetime = 2
+	// Scope lifetime - instantiated once per container in request scope
+	Scoped Lifetime = 2
+	// Transient lifetime - instatiated once per call
+	Transient Lifetime = 3
 
 	main    scope = 1
 	request scope = 2
 )
 
 var (
-	notAFunctionError = errors.New("argument is not a function")
+	errNotAFunction   = errors.New("argument is not a function")
 	contextParamsType = reflect.TypeOf(ContextParams{})
 )
 
@@ -54,6 +60,7 @@ func NewContainer() *Container {
 		constructors:    make(map[reflect.Type]innerConstructor),
 		singletonsCache: make(map[reflect.Type]reflect.Value),
 		contextParams:   make(map[string]interface{}),
+		lifetimes:       make(map[reflect.Type]Lifetime),
 		scope:           main,
 	}
 }
@@ -76,21 +83,24 @@ func (c *Container) WithContext(key string, value interface{}) *Container {
 		graph:           c.graph,
 		constructors:    c.constructors,
 		singletonsCache: c.singletonsCache,
+		scopedCache:     c.scopedCache,
+		lifetimes:       c.lifetimes,
 		contextParams:   newContext,
 	}
 
 	return newContainer
 }
 
-// RequestScoped returns new container in request scope
-func (c *Container) RequestScoped() *Container {
+// Scoped returns new container in request scope
+func (c *Container) Scoped() *Container {
 	return &Container{
 		m:               sync.RWMutex{},
 		graph:           c.graph,
 		constructors:    c.constructors,
 		singletonsCache: c.singletonsCache,
-		perRequestCache: make(map[reflect.Type]reflect.Value),
+		scopedCache:     make(map[reflect.Type]reflect.Value),
 		contextParams:   c.contextParams,
+		lifetimes:       c.lifetimes,
 		scope:           request,
 	}
 }
@@ -104,10 +114,10 @@ func (contextParams ContextParams) GetValue(key string) interface{} {
 // needs all of its inner parameters to be instantiated.
 // If ContextParams type is passed as an argument, it will give access to container's
 // context parameters.
-func (c *Container) Register(provider interface{}, scope Lifetime) error {
+func (c *Container) Register(provider interface{}, lifetime Lifetime) error {
 	providerType := reflect.TypeOf(provider)
 	if providerType.Kind() != reflect.Func {
-		return notAFunctionError
+		return errNotAFunction
 	}
 
 	c.m.Lock()
@@ -146,14 +156,9 @@ func (c *Container) Register(provider interface{}, scope Lifetime) error {
 	}
 
 	providerValue := reflect.ValueOf(provider)
-	// resolve each argument and call provider
 	innerConstructor := getConstructor(numIn, argTypes, providerValue)
 
-	// create entries in singletonsCache for singletons
-	if scope == Singleton {
-		c.singletonsCache[outType] = reflect.Value{}
-	}
-
+	c.lifetimes[outType] = lifetime
 	c.constructors[outType] = innerConstructor
 	return nil
 }
@@ -161,6 +166,7 @@ func (c *Container) Register(provider interface{}, scope Lifetime) error {
 func getConstructor(numIn int, argTypes []reflect.Type, providerValue reflect.Value) func(con *Container) reflect.Value {
 	return func(con *Container) reflect.Value {
 		args := make([]reflect.Value, numIn)
+		// resolve each argument and call provider
 		for i, argType := range argTypes {
 			// get value of ContextParams
 			if argType == contextParamsType {
@@ -174,13 +180,13 @@ func getConstructor(numIn int, argTypes []reflect.Type, providerValue reflect.Va
 				continue
 			}
 
-			// if arg exists in perRequestCache - retrieve it
-			if val, ok := con.perRequestCache[argType]; ok {
+			// if arg exists in scopedCache - retrieve it
+			if val, ok := con.scopedCache[argType]; ok {
 				args[i] = val
 				continue
 			}
 
-			// otherwise - call constructor for that type
+			// call constructor for argType
 			args[i] = con.constructors[argType](con)
 		}
 
@@ -204,7 +210,7 @@ func (c *Container) Build() error {
 		}
 
 		// if there needs to be a cached value (singleton) - create it
-		if _, ok := c.singletonsCache[t]; ok {
+		if val, ok := c.lifetimes[t]; ok && val == Singleton {
 			c.singletonsCache[t] = c.constructors[t](c)
 		}
 	}
@@ -220,42 +226,17 @@ func (c *Container) Build() error {
 func (c *Container) Invoke(invoker interface{}) error {
 	invokerType := reflect.TypeOf(invoker)
 	if invokerType.Kind() != reflect.Func {
-		return notAFunctionError
+		return errNotAFunction
 	}
 
 	numIn := invokerType.NumIn()
 	args := make([]reflect.Value, numIn)
 	for i := 0; i < numIn; i++ {
 		argType := invokerType.In(i)
-
-		// if ContextParams - get value
-		if argType == contextParamsType {
-			args[i] = reflect.ValueOf(c.contextParams)
-			continue
-		}
-
-		// if singleton - retrieve value
-		if cachedValue, ok := c.singletonsCache[argType]; ok {
-			args[i] = cachedValue
-			continue
-		}
-
-		// if transient and container scope is request - retrieve value
-		if cachedValue, ok := c.perRequestCache[argType]; ok && c.scope == request {
-			args[i] = cachedValue
-			continue
-		}
-
-		// call constructor for type
-		constructor, ok := c.constructors[argType]
-		if !ok {
-			return fmt.Errorf("dependency %s was not registered", argType)
-		}
-
-		args[i] = constructor(c)
-		// if container scope is request - cache value
-		if c.scope == request {
-			c.perRequestCache[argType] = args[i]
+		var err error
+		args[i], err = c.getValue(argType)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -266,19 +247,57 @@ func (c *Container) Invoke(invoker interface{}) error {
 
 // Get returns dependency of type t
 func (c *Container) Get(t reflect.Type) (interface{}, error) {
-	if cachedValue, ok := c.singletonsCache[t]; ok {
-		return cachedValue.Interface(), nil
-	}
-	constructor, ok := c.constructors[t]
-	if !ok {
-		return nil, fmt.Errorf("dependency %s was not registered", t)
-	}
-
-	val := constructor(c)
-	// if container scope is request - cache value
-	if c.scope == request {
-		c.perRequestCache[t] = val
+	val, err := c.getValue(t)
+	if err != nil {
+		return nil, err
 	}
 
 	return val.Interface(), nil
+}
+
+// getValue resolves dependency
+func (c *Container) getValue(argType reflect.Type) (reflect.Value, error) {
+	// if ContextParams - get value
+	if argType == contextParamsType {
+		return reflect.ValueOf(c.contextParams), nil
+	}
+
+	// get constructor for type to ensure it was registered
+	constructor, ok := c.constructors[argType]
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("dependency %s was not registered", argType)
+	}
+
+	// check lifetime
+	lifetime, ok := c.lifetimes[argType]
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("unknown lifetime for dependency %s", argType)
+	}
+
+	// get value from cache if necessary
+	switch lifetime {
+	case Singleton:
+		// for singletons - always retrieve
+		if cachedValue, ok := c.singletonsCache[argType]; ok {
+			return cachedValue, nil
+		}
+		fallthrough
+	case Scoped:
+		// for scoped - retrieve if container is in request scope
+		if c.scope == request {
+			if cachedValue, ok := c.scopedCache[argType]; ok {
+				return cachedValue, nil
+			}
+		}
+		fallthrough
+	default:
+		// for transient or first time scoped invocations - call constructor for type
+		val := constructor(c)
+		// if container scope is request - cache value
+		if c.scope == request {
+			c.scopedCache[argType] = val
+		}
+
+		return val, nil
+	}
 }
