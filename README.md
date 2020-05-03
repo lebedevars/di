@@ -59,6 +59,6 @@ c = c.WithContext("key", value)
 To retrieve context parameters, pass a special type ContextParams as an argument in provider:
 ```go
 err := c.Register(func(params di.ContextParams) *Logger {
-		return logger.With("id", params.GetValue("id"))
-	}, di.Scoped)
+	return logger.With("id", params.GetValue("id"))
+}, di.Scoped)
 ```
