@@ -11,14 +11,15 @@ import (
 type (
 	// Container is a DI container
 	Container struct {
+		built           bool
 		m               sync.RWMutex
+		scope           scope
 		graph           *dependencyGraph
 		constructors    map[reflect.Type]innerConstructor
 		singletonsCache map[reflect.Type]reflect.Value
 		scopedCache     map[reflect.Type]reflect.Value
 		lifetimes       map[reflect.Type]Lifetime
 		contextParams   ContextParams
-		scope           scope
 	}
 
 	// Lifetime determines the lifetime of dependencies and whether it can be retrieved from cache or should be
@@ -49,14 +50,17 @@ const (
 )
 
 var (
-	errNotAFunction   = errors.New("argument is not a function")
-	contextParamsType = reflect.TypeOf(ContextParams{})
+	errNotAFunction       = errors.New("argument is not a function")
+	errOnlyOneOutParam    = errors.New("only one out parameter is allowed")
+	errMustBuildContainer = errors.New("container must be built")
+	contextParamsType     = reflect.TypeOf(ContextParams{})
 )
 
 // NewContainer creates a new container
 func NewContainer() *Container {
 	return &Container{
 		m:               sync.RWMutex{},
+		built:           false,
 		graph:           newDependencyGraph(),
 		constructors:    make(map[reflect.Type]innerConstructor),
 		singletonsCache: make(map[reflect.Type]reflect.Value),
@@ -81,6 +85,7 @@ func (c *Container) WithContext(key string, value interface{}) *Container {
 	newContext[key] = value
 	newContainer := &Container{
 		m:               sync.RWMutex{},
+		built:           c.built,
 		graph:           c.graph,
 		constructors:    c.constructors,
 		singletonsCache: c.singletonsCache,
@@ -96,6 +101,7 @@ func (c *Container) WithContext(key string, value interface{}) *Container {
 func (c *Container) Scoped() *Container {
 	return &Container{
 		m:               sync.RWMutex{},
+		built:           c.built,
 		graph:           c.graph,
 		constructors:    c.constructors,
 		singletonsCache: c.singletonsCache,
@@ -126,7 +132,7 @@ func (c *Container) Register(provider interface{}, lifetime Lifetime) error {
 
 	numOut := providerType.NumOut()
 	if numOut != 1 {
-		return errors.New("only 1 out parameter is allowed")
+		return errOnlyOneOutParam
 	}
 
 	outType := providerType.Out(0)
@@ -134,6 +140,7 @@ func (c *Container) Register(provider interface{}, lifetime Lifetime) error {
 	if ok {
 		return fmt.Errorf("dependency %s was already registered", outType)
 	}
+
 	c.graph.addDependency(outType, nil)
 
 	numIn := providerType.NumIn()
@@ -195,7 +202,8 @@ func getConstructor(numIn int, argTypes []reflect.Type, providerValue reflect.Va
 }
 
 // Build checks dependency graph for cyclic dependencies, checks if all dependencies
-// were registered and created singletons
+// were registered and created singletons.
+// Calling Build is required, otherwise Invoke and Get calls will return an error
 func (c *Container) Build() error {
 	err := c.graph.detectCyclicDependencies()
 	if err != nil {
@@ -219,11 +227,16 @@ func (c *Container) Build() error {
 		return errors.New(strings.Join(errs, "\n"))
 	}
 
+	c.built = true
 	return nil
 }
 
 // Invoke calls invoker with resolved arguments
 func (c *Container) Invoke(invoker interface{}) error {
+	if !c.built {
+		return errMustBuildContainer
+	}
+
 	invokerType := reflect.TypeOf(invoker)
 	if invokerType.Kind() != reflect.Func {
 		return errNotAFunction
@@ -247,6 +260,10 @@ func (c *Container) Invoke(invoker interface{}) error {
 
 // Get returns dependency of type t
 func (c *Container) Get(t reflect.Type) (interface{}, error) {
+	if !c.built {
+		return nil, errMustBuildContainer
+	}
+
 	val, err := c.getValue(t)
 	if err != nil {
 		return nil, err
@@ -257,11 +274,6 @@ func (c *Container) Get(t reflect.Type) (interface{}, error) {
 
 // getValue resolves dependency
 func (c *Container) getValue(argType reflect.Type) (reflect.Value, error) {
-	// if ContextParams - get value
-	if argType == contextParamsType {
-		return reflect.ValueOf(c.contextParams), nil
-	}
-
 	// get constructor for type to ensure it was registered
 	constructor, ok := c.constructors[argType]
 	if !ok {
@@ -281,7 +293,8 @@ func (c *Container) getValue(argType reflect.Type) (reflect.Value, error) {
 		if cachedValue, ok := c.singletonsCache[argType]; ok {
 			return cachedValue, nil
 		}
-		fallthrough
+
+		return reflect.Value{}, fmt.Errorf("singleton %s not found in cache", argType)
 	case Scoped:
 		// for scoped - retrieve if container is in request scope
 		if c.scope == request {
