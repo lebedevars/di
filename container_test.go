@@ -177,6 +177,7 @@ func TestScopedRequestScope(t *testing.T) {
 	err = c.Invoke(func(dep *dependsOnScoped) {
 		as.Equal(secondRetrieve, dep.Example2)
 	})
+	as.NoError(err)
 }
 
 func TestTransientMainScope(t *testing.T) {
